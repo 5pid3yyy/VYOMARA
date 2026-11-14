@@ -6,6 +6,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 const HEALTH_INTERVAL = 15000;
 const REQUEST_TIMEOUT = 120000;
+const ANALYSIS_RADIUS_KM = 10;
 
 function createPlanetTexture(planet) {
   const canvas = document.createElement("canvas");
@@ -982,14 +983,20 @@ button { cursor: pointer; }
 .range-row {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   font-size: 10px;
   color: #9db4d2;
   margin-bottom: 10px;
 }
 
-input[type=range] {
-  accent-color: #65a9f4;
-  padding: 0;
+.fixed-radius {
+  color: #a8c8ec;
+  font-size: 12px;
+  padding: 11px 12px;
+  background: #0a1422;
+  border: 1px solid #293a51;
+  border-radius: 6px;
+  letter-spacing: .5px;
 }
 
 .analyze {
@@ -1418,7 +1425,6 @@ export default function App() {
   const [planet, setPlanet] = useState("Moon");
   const [lat, setLat] = useState("");
   const [lon, setLon] = useState("");
-  const [radius, setRadius] = useState(50);
 
   const [apiStatus, setApiStatus] = useState("CHECKING");
   const [loading, setLoading] = useState(false);
@@ -1595,11 +1601,6 @@ export default function App() {
       return;
     }
 
-    if (!Number.isFinite(radius) || radius < 10 || radius > 100) {
-      setError("Analysis radius must be between 10 and 100 km.");
-      return;
-    }
-
     requestRef.current?.abort();
 
     const controller = new AbortController();
@@ -1618,7 +1619,7 @@ export default function App() {
       planet: planet.toLowerCase(),
       lat: String(latitude),
       lon: String(longitude),
-      radius: String(radius),
+      radius: String(ANALYSIS_RADIUS_KM),
       mode: "scientific"
     });
 
@@ -1668,7 +1669,7 @@ export default function App() {
         planet,
         latitude,
         longitude,
-        radius
+        radius: ANALYSIS_RADIUS_KM
       });
 
       if (data.length === 0) {
@@ -1920,20 +1921,13 @@ export default function App() {
 
                 <div className="field">
                   <div className="range-row">
-                    <label htmlFor="radius">ANALYSIS RADIUS</label>
-                    <span>{radius} KM</span>
+                    <label>ANALYSIS RADIUS</label>
+                    <span>{ANALYSIS_RADIUS_KM} KM</span>
                   </div>
 
-                  <input
-                    id="radius"
-                    type="range"
-                    min="10"
-                    max="100"
-                    step="10"
-                    value={radius}
-                    onChange={e => setRadius(Number(e.target.value))}
-                    style={{ width: "100%" }}
-                  />
+                  <div className="fixed-radius">
+                    Fixed analysis window
+                  </div>
                 </div>
 
                 <button
@@ -1973,7 +1967,7 @@ export default function App() {
 
                 <div className="metric">
                   <small>SEARCH RADIUS</small>
-                  <strong>{radius} km</strong>
+                  <strong>{ANALYSIS_RADIUS_KM} km</strong>
                   <em>Analysis window</em>
                 </div>
 
