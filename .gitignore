@@ -1,0 +1,23 @@
+ Python environment and cache
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.tif
+*.tiff
+data/cache/
+Thumbs.db
+*.img
+*.jp2
+*.tif
+*.tiff
+*.img
+*.jp2
+data/cache/
