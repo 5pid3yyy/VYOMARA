@@ -1,6 +1,7 @@
+
 """
 VYOMARA — Scientific Backend
-Version: 4.2.0
+Version: 4.2.1
 
 Run from project root:
 python -m uvicorn main:app --app-dir backend --reload --host 127.0.0.1 --port 8000
@@ -37,6 +38,7 @@ import os
 import math
 import logging
 import time
+import threading
 import requests
 import numpy as np
 import rasterio
@@ -52,7 +54,7 @@ from rasterio.errors import WindowError
 # ============================================================
 
 APP_NAME = "VYOMARA Scientific Engine"
-VERSION = "4.2.0"
+VERSION = "4.2.1"
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
@@ -99,6 +101,34 @@ logger = logging.getLogger("VYOMARA")
 
 
 # ============================================================
+# DOWNLOAD CONCURRENCY CONTROL
+# ============================================================
+
+_DOWNLOAD_LOCKS: Dict[str, threading.Lock] = {}
+_DOWNLOAD_LOCKS_GUARD = threading.Lock()
+
+
+def get_download_lock(destination: Path) -> threading.Lock:
+    """
+    Return one lock per destination file.
+
+    Multiple requests for the same tile cannot modify the same
+    temporary file simultaneously.
+
+    Different tile downloads remain independent.
+    """
+
+    key = str(destination.resolve())
+
+    with _DOWNLOAD_LOCKS_GUARD:
+
+        if key not in _DOWNLOAD_LOCKS:
+            _DOWNLOAD_LOCKS[key] = threading.Lock()
+
+        return _DOWNLOAD_LOCKS[key]
+
+
+# ============================================================
 # APPLICATION
 # ============================================================
 
@@ -113,13 +143,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-allow_origins=[
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://vyomara.space",
-    "https://vyomara-frontend.onrender.com",
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://vyomara.space",
+        "https://vyomara-frontend.onrender.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -192,6 +222,7 @@ def get_planetary_provenance(
     }
 
     if dem_path.name.lower() != expected_names[planet]:
+
         return {
             "provider": "User-configured",
             "provenance_status": "Not independently verified",
@@ -214,59 +245,114 @@ def get_planetary_provenance(
 # ============================================================
 
 EARTH_SCREENING_POINTS = [
-    {"name": "McMurdo Dry Valleys", "country": "Antarctica",
-     "lat": -77.5, "lon": 162.5},
-
-    {"name": "Qaidam Basin", "country": "China",
-     "lat": 37.5, "lon": 95.0},
-
-    {"name": "Atacama Desert", "country": "Chile",
-     "lat": -24.5, "lon": -69.25},
-
-    {"name": "Sahara Desert", "country": "North Africa",
-     "lat": 23.5, "lon": 13.0},
-
-    {"name": "Icelandic Highlands", "country": "Iceland",
-     "lat": 64.5, "lon": -18.5},
-
-    {"name": "Tibetan Plateau", "country": "China",
-     "lat": 32.0, "lon": 88.0},
-
-    {"name": "Andes Mountains", "country": "Argentina",
-     "lat": -32.0, "lon": -70.0},
-
-    {"name": "Namib Desert", "country": "Namibia",
-     "lat": -24.0, "lon": 15.0},
-
-    {"name": "Western Australian Outback", "country": "Australia",
-     "lat": -25.0, "lon": 122.0},
-
-    {"name": "Colorado Plateau", "country": "United States",
-     "lat": 36.5, "lon": -111.5},
-
-    {"name": "Patagonian Plateau", "country": "Argentina",
-     "lat": -49.0, "lon": -70.0},
-
-    {"name": "Arabian Desert", "country": "Saudi Arabia",
-     "lat": 22.0, "lon": 45.0},
-
-    {"name": "Gobi Desert", "country": "Mongolia",
-     "lat": 43.0, "lon": 103.0},
-
-    {"name": "Ethiopian Highlands", "country": "Ethiopia",
-     "lat": 9.0, "lon": 39.0},
-
-    {"name": "Canadian Arctic", "country": "Canada",
-     "lat": 74.0, "lon": -90.0},
-
-    {"name": "New Zealand Southern Alps", "country": "New Zealand",
-     "lat": -43.5, "lon": 170.0},
-
-    {"name": "Death Valley", "country": "United States",
-     "lat": 36.2, "lon": -116.8},
-
-    {"name": "Himalayan Region", "country": "Nepal",
-     "lat": 28.0, "lon": 86.0},
+    {
+        "name": "McMurdo Dry Valleys",
+        "country": "Antarctica",
+        "lat": -77.5,
+        "lon": 162.5,
+    },
+    {
+        "name": "Qaidam Basin",
+        "country": "China",
+        "lat": 37.5,
+        "lon": 95.0,
+    },
+    {
+        "name": "Atacama Desert",
+        "country": "Chile",
+        "lat": -24.5,
+        "lon": -69.25,
+    },
+    {
+        "name": "Sahara Desert",
+        "country": "North Africa",
+        "lat": 23.5,
+        "lon": 13.0,
+    },
+    {
+        "name": "Icelandic Highlands",
+        "country": "Iceland",
+        "lat": 64.5,
+        "lon": -18.5,
+    },
+    {
+        "name": "Tibetan Plateau",
+        "country": "China",
+        "lat": 32.0,
+        "lon": 88.0,
+    },
+    {
+        "name": "Andes Mountains",
+        "country": "Argentina",
+        "lat": -32.0,
+        "lon": -70.0,
+    },
+    {
+        "name": "Namib Desert",
+        "country": "Namibia",
+        "lat": -24.0,
+        "lon": 15.0,
+    },
+    {
+        "name": "Western Australian Outback",
+        "country": "Australia",
+        "lat": -25.0,
+        "lon": 122.0,
+    },
+    {
+        "name": "Colorado Plateau",
+        "country": "United States",
+        "lat": 36.5,
+        "lon": -111.5,
+    },
+    {
+        "name": "Patagonian Plateau",
+        "country": "Argentina",
+        "lat": -49.0,
+        "lon": -70.0,
+    },
+    {
+        "name": "Arabian Desert",
+        "country": "Saudi Arabia",
+        "lat": 22.0,
+        "lon": 45.0,
+    },
+    {
+        "name": "Gobi Desert",
+        "country": "Mongolia",
+        "lat": 43.0,
+        "lon": 103.0,
+    },
+    {
+        "name": "Ethiopian Highlands",
+        "country": "Ethiopia",
+        "lat": 9.0,
+        "lon": 39.0,
+    },
+    {
+        "name": "Canadian Arctic",
+        "country": "Canada",
+        "lat": 74.0,
+        "lon": -90.0,
+    },
+    {
+        "name": "New Zealand Southern Alps",
+        "country": "New Zealand",
+        "lat": -43.5,
+        "lon": 170.0,
+    },
+    {
+        "name": "Death Valley",
+        "country": "United States",
+        "lat": 36.2,
+        "lon": -116.8,
+    },
+    {
+        "name": "Himalayan Region",
+        "country": "Nepal",
+        "lat": 28.0,
+        "lon": 86.0,
+    },
 ]
 
 
@@ -279,6 +365,7 @@ def validate_planet(planet: str) -> str:
     planet = planet.lower().strip()
 
     if planet not in ("moon", "mars"):
+
         raise HTTPException(
             status_code=400,
             detail="Planet must be either 'moon' or 'mars'.",
@@ -290,18 +377,21 @@ def validate_planet(planet: str) -> str:
 def validate_coordinates(lat: float, lon: float):
 
     if not math.isfinite(lat) or not math.isfinite(lon):
+
         raise HTTPException(
             status_code=400,
             detail="Coordinates must be finite numbers.",
         )
 
     if not -90 <= lat <= 90:
+
         raise HTTPException(
             status_code=400,
             detail="Latitude must be between -90 and 90.",
         )
 
     if not -180 <= lon <= 180:
+
         raise HTTPException(
             status_code=400,
             detail="Longitude must be between -180 and 180.",
@@ -311,15 +401,20 @@ def validate_coordinates(lat: float, lon: float):
 def validate_radius(radius_km: float):
 
     if not math.isfinite(radius_km):
+
         raise HTTPException(
             status_code=400,
             detail="Radius must be finite.",
         )
 
     if not 0 < radius_km <= MAX_RADIUS_KM:
+
         raise HTTPException(
             status_code=400,
-            detail=f"Radius must be greater than 0 and at most {MAX_RADIUS_KM:g} km.",
+            detail=(
+                f"Radius must be greater than 0 "
+                f"and at most {MAX_RADIUS_KM:g} km."
+            ),
         )
 
 
@@ -340,10 +435,14 @@ def candidate_identifier(candidate: Dict[str, Any]) -> str:
 
 def raster_is_usable(path: Path) -> bool:
 
-    if not path.exists() or path.stat().st_size == 0:
+    if not path.exists():
         return False
 
     try:
+
+        if path.stat().st_size == 0:
+            return False
+
         with rasterio.open(path) as dataset:
 
             return (
@@ -360,6 +459,7 @@ def raster_is_usable(path: Path) -> bool:
 def validate_raster(path: Path):
 
     if not raster_is_usable(path):
+
         raise ValueError(
             f"Raster is missing or unusable: {path}"
         )
@@ -386,16 +486,26 @@ def validate_raster(path: Path):
 # DOWNLOAD ENGINE
 # ============================================================
 
-def download_file(
+def _download_file_unlocked(
     url: str,
     destination: Path,
 ) -> Path:
+    """
+    Download and validate a remote raster.
+
+    The caller must hold the destination-specific lock.
+
+    The final cache file is replaced only after the downloaded
+    raster has passed validation.
+    """
 
     destination.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
+    # Recheck the cache after acquiring the lock.
+    # Another request may already have completed this download.
     if destination.exists() and raster_is_usable(destination):
         return destination
 
@@ -427,6 +537,11 @@ def download_file(
                 url,
                 stream=True,
                 timeout=(15, REQUEST_TIMEOUT),
+                headers={
+                    "User-Agent": (
+                        "VYOMARA-Scientific-Engine/4.2.1"
+                    )
+                },
             ) as response:
 
                 response.raise_for_status()
@@ -436,10 +551,35 @@ def download_file(
                 )
 
                 if content_length:
-                    if int(content_length) > MAX_DOWNLOAD_SIZE:
+
+                    try:
+                        expected_size = int(content_length)
+
+                    except ValueError:
+
                         raise ValueError(
-                            "Remote file exceeds download limit."
+                            "Remote server returned an invalid Content-Length."
                         )
+
+                    if expected_size > MAX_DOWNLOAD_SIZE:
+
+                        raise ValueError(
+                            "Remote file exceeds the configured download limit."
+                        )
+
+                content_type = response.headers.get(
+                    "Content-Type",
+                    "",
+                ).lower()
+
+                if (
+                    "text/html" in content_type
+                    or "application/xml" in content_type
+                ):
+
+                    raise ValueError(
+                        "Remote server returned HTML/XML instead of a raster."
+                    )
 
                 with open(temporary, "wb") as file:
 
@@ -453,43 +593,131 @@ def download_file(
                         total += len(chunk)
 
                         if total > MAX_DOWNLOAD_SIZE:
+
                             raise ValueError(
-                                "Download exceeded size limit."
+                                "Download exceeded the configured size limit."
                             )
 
                         file.write(chunk)
 
             if total == 0:
-                raise ValueError("Downloaded file is empty.")
 
-            # Validate downloaded TIFF before replacing cache.
+                raise ValueError(
+                    "Downloaded file is empty."
+                )
+
+            # ------------------------------------------------
+            # TIFF SIGNATURE VALIDATION
+            # ------------------------------------------------
+
+            with open(temporary, "rb") as file:
+                signature = file.read(4)
+
+            valid_tiff_signatures = (
+                b"II*\x00",
+                b"MM\x00*",
+                b"II+\x00",
+                b"MM\x00+",
+            )
+
+            if signature not in valid_tiff_signatures:
+
+                raise ValueError(
+                    "Downloaded response is not a recognized TIFF file. "
+                    f"Received signature: {signature!r}"
+                )
+
+            # ------------------------------------------------
+            # RASTER VALIDATION
+            # ------------------------------------------------
+
             with rasterio.open(temporary) as dataset:
 
-                if dataset.count < 1 or dataset.crs is None:
+                if dataset.count < 1:
+
                     raise ValueError(
-                        "Downloaded raster is not a valid georeferenced TIFF."
+                        "Downloaded raster contains no bands."
+                    )
+
+                if dataset.crs is None:
+
+                    raise ValueError(
+                        "Downloaded raster has no CRS."
                     )
 
                 if dataset.width < 5 or dataset.height < 5:
+
                     raise ValueError(
                         "Downloaded raster dimensions are invalid."
                     )
 
+                if not all(
+                    math.isfinite(value)
+                    for value in dataset.bounds
+                ):
+
+                    raise ValueError(
+                        "Downloaded raster bounds are invalid."
+                    )
+
+            # Atomic replacement after successful validation.
             temporary.replace(destination)
+
+            logger.info(
+                "Raster download completed: %s (%s bytes)",
+                destination.name,
+                total,
+            )
 
             return destination
 
         except Exception as exc:
 
             last_error = exc
+
+            logger.warning(
+                "Download attempt %s failed for %s: %s",
+                attempt + 1,
+                destination.name,
+                exc,
+            )
+
             temporary.unlink(missing_ok=True)
 
             if attempt + 1 < DOWNLOAD_RETRIES:
-                time.sleep(1.5 * (attempt + 1))
+
+                time.sleep(
+                    1.5 * (attempt + 1)
+                )
 
     raise RuntimeError(
-        f"Download failed after {DOWNLOAD_RETRIES} attempts: {last_error}"
+        f"Download failed after {DOWNLOAD_RETRIES} attempts: "
+        f"{last_error}"
     )
+
+
+def download_file(
+    url: str,
+    destination: Path,
+) -> Path:
+    """
+    Thread-safe download wrapper.
+
+    Same destination:
+        Serialized through a lock.
+
+    Different destinations:
+        Can download independently.
+    """
+
+    lock = get_download_lock(destination)
+
+    with lock:
+
+        return _download_file_unlocked(
+            url,
+            destination,
+        )
 
 
 # ============================================================
@@ -499,22 +727,29 @@ def download_file(
 def get_planet_dem_path(planet: str) -> Path:
 
     if planet == "moon":
+
         local_path = MOON_DEM_PATH
         remote_url = MOON_DEM_URL
+
     else:
+
         local_path = MARS_DEM_PATH
         remote_url = MARS_DEM_URL
 
     if local_path.exists():
 
         try:
+
             validate_raster(local_path)
             return local_path
 
         except Exception as exc:
+
             raise HTTPException(
                 status_code=500,
-                detail=f"{planet.upper()} DEM is unusable: {exc}",
+                detail=(
+                    f"{planet.upper()} DEM is unusable: {exc}"
+                ),
             )
 
     if remote_url:
@@ -522,12 +757,19 @@ def get_planet_dem_path(planet: str) -> Path:
         destination = CACHE_DIR / f"{planet}_remote_dem.tif"
 
         try:
-            return download_file(remote_url, destination)
+
+            return download_file(
+                remote_url,
+                destination,
+            )
 
         except Exception as exc:
+
             raise HTTPException(
                 status_code=502,
-                detail=f"Could not retrieve {planet.upper()} DEM: {exc}",
+                detail=(
+                    f"Could not retrieve {planet.upper()} DEM: {exc}"
+                ),
             )
 
     raise HTTPException(
@@ -560,14 +802,26 @@ def make_geographic_bounds(
         radius_m / body_radius
     )
 
-    south = max(-90.0, lat - latitude_delta)
-    north = min(90.0, lat + latitude_delta)
+    south = max(
+        -90.0,
+        lat - latitude_delta,
+    )
 
-    cosine = abs(math.cos(math.radians(lat)))
+    north = min(
+        90.0,
+        lat + latitude_delta,
+    )
+
+    cosine = abs(
+        math.cos(math.radians(lat))
+    )
 
     if cosine < 1e-6:
+
         longitude_delta = 180.0
+
     else:
+
         longitude_delta = min(
             latitude_delta / cosine,
             180.0,
@@ -576,9 +830,6 @@ def make_geographic_bounds(
     west = lon - longitude_delta
     east = lon + longitude_delta
 
-    # Keep bounds inside the conventional geographic domain.
-    # Regions crossing the longitude seam are handled separately
-    # by the planetary raster reader.
     return west, south, east, north
 
 
@@ -594,11 +845,18 @@ def format_tile_coordinate(
     degree = math.floor(value)
 
     if axis == "lat":
+
         prefix = "N" if degree >= 0 else "S"
-        return f"{prefix}{abs(degree):02d}_00"
+
+        return (
+            f"{prefix}{abs(degree):02d}_00"
+        )
 
     prefix = "E" if degree >= 0 else "W"
-    return f"{prefix}{abs(degree):03d}_00"
+
+    return (
+        f"{prefix}{abs(degree):03d}_00"
+    )
 
 
 def earth_tile_url(
@@ -606,8 +864,15 @@ def earth_tile_url(
     lon: float,
 ) -> str:
 
-    lat_name = format_tile_coordinate(lat, "lat")
-    lon_name = format_tile_coordinate(lon, "lon")
+    lat_name = format_tile_coordinate(
+        lat,
+        "lat",
+    )
+
+    lon_name = format_tile_coordinate(
+        lon,
+        "lon",
+    )
 
     folder = (
         f"Copernicus_DSM_COG_30_"
@@ -616,7 +881,9 @@ def earth_tile_url(
 
     filename = folder + ".tif"
 
-    return f"{EARTH_BUCKET}/{folder}/{filename}"
+    return (
+        f"{EARTH_BUCKET}/{folder}/{filename}"
+    )
 
 
 def get_earth_tile(
@@ -624,24 +891,32 @@ def get_earth_tile(
     lon: float,
 ) -> Path:
 
-    lat_name = format_tile_coordinate(lat, "lat")
-    lon_name = format_tile_coordinate(lon, "lon")
+    lat_name = format_tile_coordinate(
+        lat,
+        "lat",
+    )
 
-    destination = EARTH_CACHE / f"earth_{lat_name}_{lon_name}.tif"
+    lon_name = format_tile_coordinate(
+        lon,
+        "lon",
+    )
 
-    if raster_is_usable(destination):
-        return destination
-
-    if destination.exists():
-        destination.unlink(missing_ok=True)
+    destination = (
+        EARTH_CACHE
+        / f"earth_{lat_name}_{lon_name}.tif"
+    )
 
     try:
+
+        # All cache checks, deletion and downloads happen
+        # under the same destination-specific lock.
         return download_file(
             earth_tile_url(lat, lon),
             destination,
         )
 
     except Exception as exc:
+
         raise RuntimeError(
             f"Copernicus tile retrieval failed at "
             f"{lat:.3f}, {lon:.3f}: {exc}"
@@ -658,28 +933,52 @@ def get_earth_tiles_for_bounds(
         -180 <= west < east <= 180
         and -90 <= south < north <= 90
     ):
-        raise ValueError("Invalid Earth geographic bounds.")
 
-    last_lon = np.nextafter(east, -np.inf)
-    last_lat = np.nextafter(north, -np.inf)
+        raise ValueError(
+            "Invalid Earth geographic bounds."
+        )
+
+    last_lon = np.nextafter(
+        east,
+        -np.inf,
+    )
+
+    last_lat = np.nextafter(
+        north,
+        -np.inf,
+    )
 
     min_lon = math.floor(west)
     max_lon = math.floor(last_lon)
 
-    min_lat = max(-90, math.floor(south))
-    max_lat = min(89, math.floor(last_lat))
+    min_lat = max(
+        -90,
+        math.floor(south),
+    )
+
+    max_lat = min(
+        89,
+        math.floor(last_lat),
+    )
 
     paths = []
     failures = []
 
-    for lat_degree in range(min_lat, max_lat + 1):
+    for lat_degree in range(
+        min_lat,
+        max_lat + 1,
+    ):
 
-        for lon_degree in range(min_lon, max_lon + 1):
+        for lon_degree in range(
+            min_lon,
+            max_lon + 1,
+        ):
 
             if not -180 <= lon_degree <= 179:
                 continue
 
             try:
+
                 path = get_earth_tile(
                     lat_degree + 0.5,
                     lon_degree + 0.5,
@@ -688,6 +987,7 @@ def get_earth_tiles_for_bounds(
                 paths.append(path)
 
             except Exception as exc:
+
                 failures.append({
                     "latitude_tile": lat_degree,
                     "longitude_tile": lon_degree,
@@ -695,6 +995,7 @@ def get_earth_tiles_for_bounds(
                 })
 
     if not paths:
+
         raise RuntimeError(
             "No Copernicus DEM tiles could be retrieved. "
             f"Failures: {failures[:5]}"
@@ -702,6 +1003,7 @@ def get_earth_tiles_for_bounds(
 
     # Do not silently claim full coverage when tiles are missing.
     if failures:
+
         raise RuntimeError(
             f"{len(failures)} Copernicus tile(s) failed. "
             f"Successful tiles: {len(paths)}. "
@@ -725,7 +1027,11 @@ def read_window_array(
         transform=src.transform,
     )
 
-    window = window.round_offsets().round_lengths()
+    window = (
+        window
+        .round_offsets()
+        .round_lengths()
+    )
 
     full_window = rasterio.windows.Window(
         0,
@@ -735,14 +1041,19 @@ def read_window_array(
     )
 
     try:
-        window = window.intersection(full_window)
+
+        window = window.intersection(
+            full_window
+        )
 
     except WindowError:
+
         raise ValueError(
             "Requested region is outside raster coverage."
         )
 
     if window.width < 5 or window.height < 5:
+
         raise ValueError(
             "Requested region contains too few raster pixels."
         )
@@ -753,10 +1064,11 @@ def read_window_array(
         masked=True,
     )
 
-    # Critical fix:
-    # Convert integer raster data to float BEFORE filling masked
-    # cells with NaN. This prevents the MOLA int16 conversion error.
-    array = data.astype(np.float64).filled(np.nan)
+    # Convert integer data to float before filling masked
+    # cells with NaN.
+    array = data.astype(
+        np.float64
+    ).filled(np.nan)
 
     array[~np.isfinite(array)] = np.nan
 
@@ -784,11 +1096,13 @@ def read_single_raster_window(
     with rasterio.open(raster_path) as src:
 
         if src.crs is None:
+
             raise ValueError(
                 "Raster has no coordinate reference system."
             )
 
         if not src.crs.is_geographic:
+
             raster_bounds = transform_bounds(
                 "EPSG:4326",
                 src.crs,
@@ -809,15 +1123,23 @@ def read_single_raster_window(
             raster_west = src.bounds.left
             raster_east = src.bounds.right
 
-            # Determine the longitude convention of the raster.
-            if raster_west >= 0 and raster_east > 180:
-                domain_west, domain_east = 0.0, 360.0
+            if (
+                raster_west >= 0
+                and raster_east > 180
+            ):
+
+                domain_west = 0.0
+                domain_east = 360.0
+
             else:
-                domain_west, domain_east = -180.0, 180.0
+
+                domain_west = -180.0
+                domain_east = 180.0
 
             span = east - west
 
             if span <= 0 or span >= 360:
+
                 raise ValueError(
                     "Invalid planetary longitude window."
                 )
@@ -826,11 +1148,15 @@ def read_single_raster_window(
             normalized_east = east
 
             if domain_west == 0.0:
-                normalized_west = west % 360.0
-                normalized_east = normalized_west + span
 
-            # Normal case: the window does not cross the raster seam.
+                normalized_west = west % 360.0
+
+                normalized_east = (
+                    normalized_west + span
+                )
+
             if normalized_east <= domain_east:
+
                 array, transform = read_window_array(
                     src,
                     (
@@ -842,7 +1168,7 @@ def read_single_raster_window(
                 )
 
             else:
-                # Split the requested window at the longitude seam.
+
                 first, first_transform = read_window_array(
                     src,
                     (
@@ -853,8 +1179,10 @@ def read_single_raster_window(
                     ),
                 )
 
-                second_end = domain_west + (
-                    normalized_east - domain_east
+                second_end = (
+                    domain_west
+                    + normalized_east
+                    - domain_east
                 )
 
                 second, _ = read_window_array(
@@ -868,6 +1196,7 @@ def read_single_raster_window(
                 )
 
                 if first.shape[0] != second.shape[0]:
+
                     raise ValueError(
                         "Longitude seam windows have incompatible rows."
                     )
@@ -883,15 +1212,19 @@ def read_single_raster_window(
             array.shape[0] < minimum_pixels
             or array.shape[1] < minimum_pixels
         ):
+
             raise ValueError(
                 "Requested region contains too few pixels."
             )
 
         valid_fraction = float(
-            np.count_nonzero(np.isfinite(array)) / array.size
+            np.count_nonzero(
+                np.isfinite(array)
+            ) / array.size
         )
 
         if valid_fraction < MIN_VALID_FRACTION:
+
             raise ValueError(
                 f"Insufficient valid {planet.upper()} DEM coverage: "
                 f"{valid_fraction:.1%}"
@@ -902,10 +1235,14 @@ def read_single_raster_window(
             "transform": transform,
             "valid_fraction": valid_fraction,
             "crs": str(src.crs),
-            "is_geographic": bool(src.crs.is_geographic),
+            "is_geographic": bool(
+                src.crs.is_geographic
+            ),
             "source": str(raster_path),
             "planet": planet,
-            "center_lat": (south + north) / 2.0,
+            "center_lat": (
+                south + north
+            ) / 2.0,
         }
 
 
@@ -917,14 +1254,19 @@ def read_earth_window(
     bounds: Tuple[float, float, float, float],
 ) -> Dict[str, Any]:
 
-    paths = get_earth_tiles_for_bounds(bounds)
+    paths = get_earth_tiles_for_bounds(
+        bounds
+    )
 
     datasets = []
 
     try:
 
         for path in paths:
-            datasets.append(rasterio.open(path))
+
+            datasets.append(
+                rasterio.open(path)
+            )
 
         array, transform = merge(
             datasets,
@@ -941,15 +1283,19 @@ def read_earth_window(
         data[~np.isfinite(data)] = np.nan
 
         if data.size == 0:
+
             raise ValueError(
                 "Copernicus returned an empty raster window."
             )
 
         valid_fraction = float(
-            np.count_nonzero(np.isfinite(data)) / data.size
+            np.count_nonzero(
+                np.isfinite(data)
+            ) / data.size
         )
 
         if valid_fraction < MIN_VALID_FRACTION:
+
             raise ValueError(
                 "Insufficient valid Copernicus coverage."
             )
@@ -960,9 +1306,14 @@ def read_earth_window(
             "valid_fraction": valid_fraction,
             "crs": "EPSG:4326",
             "is_geographic": True,
-            "source": [str(path) for path in paths],
+            "source": [
+                str(path)
+                for path in paths
+            ],
             "planet": "earth",
-            "center_lat": (bounds[1] + bounds[3]) / 2.0,
+            "center_lat": (
+                bounds[1] + bounds[3]
+            ) / 2.0,
         }
 
     finally:
@@ -981,24 +1332,42 @@ def calculate_descriptors(
 ) -> Dict[str, Any]:
 
     z = raster_data["array"].copy()
+
     valid = np.isfinite(z)
 
-    valid_count = int(np.count_nonzero(valid))
+    valid_count = int(
+        np.count_nonzero(valid)
+    )
 
     if valid_count < 25:
+
         raise ValueError(
             "Not enough valid elevation pixels."
         )
 
     values = z[valid]
 
-    median = float(np.median(values))
-    mean = float(np.mean(values))
-    minimum = float(np.min(values))
-    maximum = float(np.max(values))
+    median = float(
+        np.median(values)
+    )
+
+    mean = float(
+        np.mean(values)
+    )
+
+    minimum = float(
+        np.min(values)
+    )
+
+    maximum = float(
+        np.max(values)
+    )
 
     relief = maximum - minimum
-    elevation_std = float(np.std(values))
+
+    elevation_std = float(
+        np.std(values)
+    )
 
     transform = raster_data["transform"]
 
@@ -1008,15 +1377,23 @@ def calculate_descriptors(
     if raster_data.get("is_geographic", False):
 
         latitude = raster_data["center_lat"]
+
         body_radius = PLANET_RADII[planet]
 
         dx = (
             math.radians(dx_raw)
             * body_radius
-            * abs(math.cos(math.radians(latitude)))
+            * abs(
+                math.cos(
+                    math.radians(latitude)
+                )
+            )
         )
 
-        dy = math.radians(dy_raw) * body_radius
+        dy = (
+            math.radians(dy_raw)
+            * body_radius
+        )
 
     else:
 
@@ -1024,27 +1401,44 @@ def calculate_descriptors(
         dy = dy_raw
 
         try:
-            with rasterio.open(raster_data["source"]) as src:
+
+            with rasterio.open(
+                raster_data["source"]
+            ) as src:
 
                 axis_info = src.crs.axis_info
 
                 if axis_info:
-                    factor = axis_info[0].unit_conversion_factor
+
+                    factor = (
+                        axis_info[0]
+                        .unit_conversion_factor
+                    )
 
                     if factor:
+
                         dx *= factor
                         dy *= factor
 
         except Exception:
+
             logger.warning(
                 "Could not determine projected CRS unit conversion."
             )
 
-    dx = max(abs(dx), 0.001)
-    dy = max(abs(dy), 0.001)
+    dx = max(
+        abs(dx),
+        0.001,
+    )
+
+    dy = max(
+        abs(dy),
+        0.001,
+    )
 
     # Fill invalid cells with median for gradient calculation.
     # The original valid mask is retained for statistics.
+
     filled = np.where(
         valid,
         z,
@@ -1059,14 +1453,19 @@ def calculate_descriptors(
 
     slope_radians = np.arctan(
         np.sqrt(
-            gradient_x ** 2 + gradient_y ** 2
+            gradient_x ** 2
+            + gradient_y ** 2
         )
     )
 
-    slope_degrees = np.degrees(slope_radians)
+    slope_degrees = np.degrees(
+        slope_radians
+    )
+
     slope_valid = slope_degrees[valid]
 
     # Local residual roughness using an eight-neighbour mean.
+
     padded = np.pad(
         filled,
         1,
@@ -1085,6 +1484,7 @@ def calculate_descriptors(
     ) / 8.0
 
     residual = filled - neighbors
+
     roughness_values = residual[valid]
 
     return {
@@ -1096,12 +1496,24 @@ def calculate_descriptors(
         "relief": float(relief),
         "elevation_std": elevation_std,
 
-        "slope_mean": float(np.mean(slope_valid)),
-        "slope_std": float(np.std(slope_valid)),
-        "slope_max": float(np.max(slope_valid)),
+        "slope_mean": float(
+            np.mean(slope_valid)
+        ),
+
+        "slope_std": float(
+            np.std(slope_valid)
+        ),
+
+        "slope_max": float(
+            np.max(slope_valid)
+        ),
 
         "roughness": float(
-            np.sqrt(np.mean(roughness_values ** 2))
+            np.sqrt(
+                np.mean(
+                    roughness_values ** 2
+                )
+            )
         ),
 
         "valid_fraction": raster_data["valid_fraction"],
@@ -1130,12 +1542,18 @@ def calculate_similarity(
 ) -> Dict[str, Any]:
 
     differences = {}
+
     weighted_error = 0.0
 
     for key, weight in DESCRIPTOR_WEIGHTS.items():
 
-        target_value = float(target[key])
-        candidate_value = float(candidate[key])
+        target_value = float(
+            target[key]
+        )
+
+        candidate_value = float(
+            candidate[key]
+        )
 
         difference = abs(
             target_value - candidate_value
@@ -1152,7 +1570,9 @@ def calculate_similarity(
             1.0,
         )
 
-        weighted_error += normalized_error * weight
+        weighted_error += (
+            normalized_error * weight
+        )
 
         differences[key] = {
             "target": target_value,
@@ -1167,7 +1587,10 @@ def calculate_similarity(
     )
 
     return {
-        "similarity_score": round(score, 2),
+        "similarity_score": round(
+            score,
+            2,
+        ),
 
         "parameter_differences": differences,
 
@@ -1190,7 +1613,9 @@ def analyse_target(
     radius_km: float,
 ):
 
-    dem_path = get_planet_dem_path(planet)
+    dem_path = get_planet_dem_path(
+        planet
+    )
 
     bounds = make_geographic_bounds(
         lat,
@@ -1219,8 +1644,13 @@ def analyse_target(
         "source_file": str(dem_path),
         "source_crs": raster["crs"],
 
-        "resolution_x": descriptors["pixel_spacing_x_m"],
-        "resolution_y": descriptors["pixel_spacing_y_m"],
+        "resolution_x": (
+            descriptors["pixel_spacing_x_m"]
+        ),
+
+        "resolution_y": (
+            descriptors["pixel_spacing_y_m"]
+        ),
 
         "valid_fraction": raster["valid_fraction"],
     }
@@ -1247,7 +1677,9 @@ def analyse_earth_candidate(
         "earth",
     )
 
-    raster = read_earth_window(bounds)
+    raster = read_earth_window(
+        bounds
+    )
 
     descriptors = calculate_descriptors(
         raster,
@@ -1284,8 +1716,13 @@ def root():
 @app.get("/api/health")
 def health():
 
-    moon_available = raster_is_usable(MOON_DEM_PATH)
-    mars_available = raster_is_usable(MARS_DEM_PATH)
+    moon_available = raster_is_usable(
+        MOON_DEM_PATH
+    )
+
+    mars_available = raster_is_usable(
+        MARS_DEM_PATH
+    )
 
     return {
         "status": "healthy",
@@ -1296,12 +1733,15 @@ def health():
         "cache_directory": str(CACHE_DIR),
 
         "planetary_data": {
+
             "moon": {
                 "available": moon_available,
                 "local_file": str(MOON_DEM_PATH),
                 "mission": "NASA Lunar Reconnaissance Orbiter",
                 "instrument": "LOLA",
-                "remote_url_configured": bool(MOON_DEM_URL),
+                "remote_url_configured": bool(
+                    MOON_DEM_URL
+                ),
             },
 
             "mars": {
@@ -1309,7 +1749,9 @@ def health():
                 "local_file": str(MARS_DEM_PATH),
                 "mission": "NASA Mars Global Surveyor",
                 "instrument": "MOLA",
-                "remote_url_configured": bool(MARS_DEM_URL),
+                "remote_url_configured": bool(
+                    MARS_DEM_URL
+                ),
             },
         },
 
@@ -1330,6 +1772,7 @@ def get_parameters():
 
     return {
         "parameters": [
+
             {
                 "id": "relief",
                 "name": "Terrain Relief",
@@ -1338,12 +1781,14 @@ def get_parameters():
                 ),
                 "unit": "m",
             },
+
             {
                 "id": "slope_mean",
                 "name": "Mean Slope",
                 "description": "Mean terrain gradient.",
                 "unit": "degrees",
             },
+
             {
                 "id": "roughness",
                 "name": "Terrain Roughness",
@@ -1352,6 +1797,7 @@ def get_parameters():
                 ),
                 "unit": "m",
             },
+
             {
                 "id": "elevation_std",
                 "name": "Elevation Variability",
@@ -1379,7 +1825,9 @@ def get_parameters():
 @app.get("/api/regions/{planet}")
 def get_regions(planet: str):
 
-    planet = validate_planet(planet)
+    planet = validate_planet(
+        planet
+    )
 
     if planet == "moon":
 
@@ -1436,19 +1884,32 @@ def discover_analogues(
     planet: str = Query(...),
     lat: float = Query(...),
     lon: float = Query(...),
-    radius: float = Query(10.0, gt=0, le=MAX_RADIUS_KM),
+    radius: float = Query(
+        10.0,
+        gt=0,
+        le=MAX_RADIUS_KM,
+    ),
     mode: str = Query("scientific"),
     candidate_id: Optional[str] = Query(None),
 ):
 
-    planet = validate_planet(planet)
+    planet = validate_planet(
+        planet
+    )
 
-    validate_coordinates(lat, lon)
-    validate_radius(radius)
+    validate_coordinates(
+        lat,
+        lon,
+    )
+
+    validate_radius(
+        radius
+    )
 
     mode = mode.lower().strip()
 
     if mode == "demo":
+
         raise HTTPException(
             status_code=400,
             detail=(
@@ -1458,12 +1919,16 @@ def discover_analogues(
         )
 
     if mode != "scientific":
+
         raise HTTPException(
             status_code=400,
             detail="Unsupported mode. Use 'scientific'.",
         )
 
-    # Candidate selection.
+    # --------------------------------------------------------
+    # CANDIDATE SELECTION
+    # --------------------------------------------------------
+
     candidates = EARTH_SCREENING_POINTS
 
     if candidate_id:
@@ -1475,12 +1940,18 @@ def discover_analogues(
         ]
 
         if not candidates:
+
             raise HTTPException(
                 status_code=404,
-                detail=f"Unknown Earth candidate ID: {candidate_id}",
+                detail=(
+                    f"Unknown Earth candidate ID: {candidate_id}"
+                ),
             )
 
-    # Analyse planetary target.
+    # --------------------------------------------------------
+    # TARGET ANALYSIS
+    # --------------------------------------------------------
+
     try:
 
         target, target_metadata = analyse_target(
@@ -1495,7 +1966,9 @@ def discover_analogues(
 
     except Exception as exc:
 
-        logger.exception("Target analysis failed.")
+        logger.exception(
+            "Target analysis failed."
+        )
 
         raise HTTPException(
             status_code=500,
@@ -1508,7 +1981,10 @@ def discover_analogues(
     results = []
     failures = []
 
-    # Analyse Earth candidates.
+    # --------------------------------------------------------
+    # EARTH CANDIDATE ANALYSIS
+    # --------------------------------------------------------
+
     for candidate in candidates:
 
         try:
@@ -1518,7 +1994,9 @@ def discover_analogues(
                 radius,
             )
 
-            candidate_descriptors = earth_data["descriptors"]
+            candidate_descriptors = (
+                earth_data["descriptors"]
+            )
 
             comparison = calculate_similarity(
                 target,
@@ -1531,7 +2009,10 @@ def discover_analogues(
             )
 
             result = {
-                "id": candidate_identifier(candidate),
+
+                "id": candidate_identifier(
+                    candidate
+                ),
 
                 "location_name": candidate["name"],
                 "country": candidate["country"],
@@ -1553,9 +2034,11 @@ def discover_analogues(
                 ),
 
                 "descriptors": candidate_descriptors,
+
                 "target_descriptors": target,
 
                 "elevation_stats": {
+
                     "target": {
                         "mean": target["elevation_mean"],
                         "relief": target["relief"],
@@ -1563,25 +2046,32 @@ def discover_analogues(
                     },
 
                     "candidate": {
-                        "mean": candidate_descriptors["elevation_mean"],
-                        "relief": candidate_descriptors["relief"],
-                        "std": candidate_descriptors["elevation_std"],
+                        "mean": (
+                            candidate_descriptors["elevation_mean"]
+                        ),
+                        "relief": (
+                            candidate_descriptors["relief"]
+                        ),
+                        "std": (
+                            candidate_descriptors["elevation_std"]
+                        ),
                     },
                 },
 
-                "parameter_differences": comparison[
-                    "parameter_differences"
-                ],
+                "parameter_differences": (
+                    comparison["parameter_differences"]
+                ),
 
-                "similarity_score": comparison[
-                    "similarity_score"
-                ],
+                "similarity_score": (
+                    comparison["similarity_score"]
+                ),
 
-                "score_interpretation": comparison[
-                    "score_interpretation"
-                ],
+                "score_interpretation": (
+                    comparison["score_interpretation"]
+                ),
 
                 "data_sources": {
+
                     "target": target_metadata,
 
                     "candidate": {
@@ -1595,6 +2085,7 @@ def discover_analogues(
                 "status": "computed",
 
                 "quality": {
+
                     "minimum_valid_fraction": round(
                         completeness,
                         4,
@@ -1607,18 +2098,27 @@ def discover_analogues(
                 },
 
                 "methodology": {
-                    "score_type": "exploratory_comparative_index",
+
+                    "score_type": (
+                        "exploratory_comparative_index"
+                    ),
+
                     "score_is_probability": False,
+
                     "common_resolution_resampling": False,
+
                     "native_resolution_comparison_warning": (
                         "Source DEM resolutions differ. "
                         "Slope and roughness are scale-dependent."
                     ),
+
                     "elevation_included_in_score": False,
                 },
             }
 
-            results.append(result)
+            results.append(
+                result
+            )
 
         except Exception as exc:
 
@@ -1627,7 +2127,9 @@ def discover_analogues(
                 "reason": str(exc),
             }
 
-            failures.append(failure)
+            failures.append(
+                failure
+            )
 
             logger.warning(
                 "Candidate skipped: %s — %s",
@@ -1635,11 +2137,16 @@ def discover_analogues(
                 exc,
             )
 
+    # --------------------------------------------------------
+    # RESULT VALIDATION
+    # --------------------------------------------------------
+
     if not results:
 
         raise HTTPException(
             status_code=503,
             detail={
+
                 "message": (
                     "No Earth analogue candidates could be analysed."
                 ),
@@ -1659,18 +2166,28 @@ def discover_analogues(
     )
 
     # Preserve the existing JSON array response for frontend compatibility.
-    response.headers["X-Vyomara-Candidate-Count"] = str(len(results))
-    response.headers["X-Vyomara-Failed-Candidates"] = str(len(failures))
-    response.headers["X-Vyomara-Search-Method"] = (
-        "predefined_candidate_screening"
+
+    response.headers[
+        "X-Vyomara-Candidate-Count"
+    ] = str(len(results))
+
+    response.headers[
+        "X-Vyomara-Failed-Candidates"
+    ] = str(len(failures))
+
+    response.headers[
+        "X-Vyomara-Search-Method"
+    ] = "predefined_candidate_screening"
+
+    response.headers[
+        "X-Vyomara-Exhaustive-Global-Search"
+    ] = "false"
+
+    response.headers[
+        "X-Vyomara-Partial-Results"
+    ] = (
+        "true" if failures else "false"
     )
-
-    response.headers["X-Vyomara-Exhaustive-Global-Search"] = "false"
-
-    if failures:
-        response.headers["X-Vyomara-Partial-Results"] = "true"
-    else:
-        response.headers["X-Vyomara-Partial-Results"] = "false"
 
     return results
 
@@ -1683,22 +2200,34 @@ def discover_analogues(
 def discovery_status():
 
     return {
+
         "version": VERSION,
 
-        "search_method": "predefined_candidate_screening",
-        "candidate_count": len(EARTH_SCREENING_POINTS),
+        "search_method": (
+            "predefined_candidate_screening"
+        ),
+
+        "candidate_count": len(
+            EARTH_SCREENING_POINTS
+        ),
 
         "exhaustive_global_search": False,
 
         "earth_dataset": "Copernicus DEM GLO-90",
-        "earth_dataset_type": "Digital Surface Model",
+
+        "earth_dataset_type": (
+            "Digital Surface Model"
+        ),
 
         "planetary_sources": {
+
             "moon": PLANETARY_PROVENANCE["moon"],
+
             "mars": PLANETARY_PROVENANCE["mars"],
         },
 
         "cache_enabled": True,
+
         "synthetic_data": False,
 
         "similarity_method": (
@@ -1712,15 +2241,25 @@ def discovery_status():
         "common_resolution_resampling": False,
 
         "known_limitations": [
+
             "Earth search uses 18 predefined candidate regions.",
+
             "Results are not an exhaustive global ranking.",
+
             "Similarity scores are exploratory comparative indices.",
+
             "Scores are not probabilities or statistical confidence.",
+
             "Planetary and Earth vertical reference systems differ.",
+
             "Native DEM resolutions differ substantially.",
+
             "Slope and roughness are resolution-dependent.",
+
             "Common-resolution resampling is not yet implemented.",
+
             "Copernicus GLO-90 is a Digital Surface Model.",
+
             "The scoring method requires scientific validation.",
         ],
     }
@@ -1734,12 +2273,29 @@ def discovery_status():
 def startup_event():
 
     logger.info("=" * 60)
-    logger.info("VYOMARA SCIENTIFIC ENGINE")
-    logger.info("Version %s", VERSION)
-    logger.info("Backend started.")
 
-    logger.info("Data directory: %s", DATA_DIR)
-    logger.info("Earth cache: %s", EARTH_CACHE)
+    logger.info(
+        "VYOMARA SCIENTIFIC ENGINE"
+    )
+
+    logger.info(
+        "Version %s",
+        VERSION,
+    )
+
+    logger.info(
+        "Backend started."
+    )
+
+    logger.info(
+        "Data directory: %s",
+        DATA_DIR,
+    )
+
+    logger.info(
+        "Earth cache: %s",
+        EARTH_CACHE,
+    )
 
     logger.info(
         "Moon DEM usable: %s",
@@ -1758,6 +2314,10 @@ def startup_event():
 
     logger.info(
         "Search type: predefined candidate screening"
+    )
+
+    logger.info(
+        "Download concurrency protection: enabled"
     )
 
     logger.info(
