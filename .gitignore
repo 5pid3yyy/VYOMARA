@@ -1,0 +1,26 @@
+
+# Python environment and cache
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Node dependencies and build
+node_modules/
+dist/
+
+# Private configuration
+.env
+.env.*
+!.env.example
+
+# Large terrain datasets
+*.tif
+*.tiff
+
+# Temporary cache
+data/cache/
+
+# Windows files
+Thumbs.db
