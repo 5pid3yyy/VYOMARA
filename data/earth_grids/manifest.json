@@ -1,0 +1,29 @@
+{
+  "dataset": "Copernicus DEM GLO-90",
+  "dataset_type": "Digital Surface Model",
+  "radius_km": 10.0,
+  "candidate_count": 18,
+  "successful_count": 18,
+  "failed_count": 0,
+  "successful_grids": [
+    "earth-mcmurdo-dry-valleys",
+    "earth-qaidam-basin",
+    "earth-atacama-desert",
+    "earth-sahara-desert",
+    "earth-icelandic-highlands",
+    "earth-tibetan-plateau",
+    "earth-andes-mountains",
+    "earth-namib-desert",
+    "earth-western-australian-outback",
+    "earth-colorado-plateau",
+    "earth-patagonian-plateau",
+    "earth-arabian-desert",
+    "earth-gobi-desert",
+    "earth-ethiopian-highlands",
+    "earth-canadian-arctic",
+    "earth-new-zealand-southern-alps",
+    "earth-death-valley",
+    "earth-himalayan-region"
+  ],
+  "failures": []
+}
