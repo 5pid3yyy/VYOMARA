@@ -232,7 +232,6 @@ function PlanetGlobe({ planet }) {
   );
 }
 
-/* Original CSS orbital animation for the landing section. */
 function OrbitalVisual() {
   return (
     <div className="orbital-visual" aria-label="Animated planetary orbit illustration">
@@ -377,7 +376,7 @@ button { cursor: pointer; }
   to { transform: translateY(-350px); }
 }
 
-/* SCROLL ZOOM TRANSITION */
+/* LANDING PAGE */
 
 .landing-transition {
   height: 170vh;
@@ -980,41 +979,39 @@ button { cursor: pointer; }
   gap: 10px;
 }
 
-.range-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 10px;
-  color: #9db4d2;
-  margin-bottom: 10px;
-}
+/* FIND ANALOGUES BUTTON AND FIXED RADIUS NOTE */
 
-.fixed-radius {
-  color: #a8c8ec;
-  font-size: 12px;
-  padding: 11px 12px;
-  background: #0a1422;
-  border: 1px solid #293a51;
-  border-radius: 6px;
-  letter-spacing: .5px;
+.analyze-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 5px;
 }
 
 .analyze {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   background: linear-gradient(100deg, #2569aa, #398ed4);
   border: 1px solid #5aa5e9;
   border-radius: 7px;
-  padding: 14px;
+  padding: 14px 10px;
   color: white;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 1.5px;
-  margin-top: 5px;
+  letter-spacing: 1px;
   transition: .2s;
 }
 
 .analyze:hover { filter: brightness(1.15); }
 .analyze:disabled { opacity: .55; cursor: not-allowed; }
+
+.radius-note {
+  flex-shrink: 0;
+  color: #8eacd0;
+  font-size: 9px;
+  letter-spacing: .7px;
+  white-space: nowrap;
+}
 
 .note {
   color: #657b98;
@@ -1281,6 +1278,14 @@ button { cursor: pointer; }
   }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .footer { flex-direction: column; gap: 9px; }
+
+  .analyze-row {
+    gap: 8px;
+  }
+
+  .radius-note {
+    font-size: 8px;
+  }
 }
 
 /* Reduced-motion accessibility */
@@ -1434,11 +1439,6 @@ export default function App() {
   const requestRef = useRef(null);
   const transitionRef = useRef(null);
 
-  /*
-   * Scroll-driven landing transition.
-   * The landing page remains sticky while its zoom, opacity and blur
-   * are controlled by the user's actual scroll position.
-   */
   useEffect(() => {
     const stage = transitionRef.current;
     if (!stage) return;
@@ -1470,7 +1470,6 @@ export default function App() {
           Math.max(0, -rect.top / distance)
         );
 
-        // Ease the movement slightly for a more cinematic feel.
         const eased = progress * progress * (3 - 2 * progress);
 
         const zoom = 1 + eased * 1.55;
@@ -1711,7 +1710,6 @@ export default function App() {
       <div className="vyomara">
         <div className="stars" />
 
-        {/* STICKY LANDING + SCROLL ZOOM STAGE */}
         <div
           className="landing-transition"
           ref={transitionRef}
@@ -1779,7 +1777,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* MAIN APPLICATION */}
         <div id="explorer" className="app-shell">
           <div className="app-divider" />
 
@@ -1919,26 +1916,21 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="field">
-                  <div className="range-row">
-                    <label>ANALYSIS RADIUS</label>
-                    <span>{ANALYSIS_RADIUS_KM} KM</span>
-                  </div>
+                <div className="analyze-row">
+                  <button
+                    className="analyze"
+                    onClick={discover}
+                    disabled={loading || apiStatus === "OFFLINE"}
+                  >
+                    {loading
+                      ? "ANALYSING TERRAIN..."
+                      : "↗  FIND EARTH ANALOGUES"}
+                  </button>
 
-                  <div className="fixed-radius">
-                    Fixed analysis window
-                  </div>
+                  <span className="radius-note">
+                    FIXED RADIUS: 10 KM
+                  </span>
                 </div>
-
-                <button
-                  className="analyze"
-                  onClick={discover}
-                  disabled={loading || apiStatus === "OFFLINE"}
-                >
-                  {loading
-                    ? "ANALYSING TERRAIN..."
-                    : "↗  FIND EARTH ANALOGUES"}
-                </button>
 
                 <div className="note">
                   Results are ranked using terrain similarity
